@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <ArduinoJson.h>
 #include <HX711_ADC.h>
 #if defined(ESP8266) || defined(ESP32) || defined(AVR)
 #include <EEPROM.h>
@@ -65,6 +66,7 @@ void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
 /*Funções*/
 void calibrate(void);
 void initButtons(void);
+void publishMessage(int trashType, float trashWeight);
 
 void btnStartISRCallBack();
 void btnOrganicISRCallBack();
@@ -210,10 +212,16 @@ void vTaskSendWeight(void *pvParameters)
     vTaskSuspend(taskReadWeightHandle);
     xQueueReceive(xFilaTrashType, &trashType, portMAX_DELAY);
     xQueueReceive(xFilaTrashWeight, &trashWeight, portMAX_DELAY);
-    Serial.print("Tipo: ");
-    Serial.println(trashType);
-    Serial.print("Peso: ");
-    Serial.println(trashWeight);
+
+    publishMessage(trashType, trashWeight);
+
+    lcd.setCursor(0, 0);
+    lcd.print("Peso enviado");
+    lcd.setCursor(0, 1);
+    lcd.print("com sucesso");
+
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    lcd.clear();
     vTaskSuspend(taskSendWeightHandle);
   }
 }
@@ -228,7 +236,6 @@ void vTaskTare(void *pvParameters)
     {
       Serial.println("Tare complete");
     }
-
     vTaskSuspend(taskTareHandle);
   }
 }
@@ -458,4 +465,17 @@ void initButtons(void)
   pinMode(btnPlastic, INPUT_PULLUP);
   pinMode(btnTare, INPUT_PULLUP);
   pinMode(btnCalibrate, INPUT_PULLUP);
+}
+
+void publishMessage(int trashType, float trashWeight)
+{
+  StaticJsonDocument<200> doc;
+  doc["trashType"] = trashType;
+  doc["trashWeight"] = trashWeight;
+  char jsonBuffer[512];
+  serializeJson(doc, jsonBuffer); // print to client
+ 
+  Serial.println(jsonBuffer);
+
+  //client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 }
