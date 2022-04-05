@@ -43,12 +43,14 @@ TaskHandle_t taskReadWeightHandle = NULL;
 // SemaphoreHandle_t xSemaphoreMasterMode;
 
 TimerHandle_t xTimerBtnDebounce;
+TimerHandle_t xTimerReadWeightTimeout;
 
 /*Protótipos das Tasks*/
 void vTaskReadWeight(void *pvParameters);
 
 /*Timer Callbacks*/
 void callBackTimerBtnDebounce(TimerHandle_t xTimer);
+void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
 
 /*Funções*/
 void calibrate(void);
@@ -84,7 +86,8 @@ void setup()
   }*/
 
   /*Criação Timers*/
-  xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE",pdMS_TO_TICKS(500),pdTRUE,0,callBackTimerBtnDebounce);
+  xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE", pdMS_TO_TICKS(500), pdTRUE, 0, callBackTimerBtnDebounce);
+  xTimerReadWeightTimeout = xTimerCreate("TIMER READ WEIGHT TIMEOUT", pdMS_TO_TICKS(10000), pdTRUE, 0, callBackTimerReadWeightTimeout);
 
   /*Criação Interrupções*/
   attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
@@ -126,8 +129,6 @@ void setup()
 
   lcd.init();
   lcd.backlight();
-
-  vTaskResume(taskReadWeightHandle);
 }
 
 void loop()
@@ -186,16 +187,26 @@ void vTaskReadWeight(void *pvParameters)
 }
 
 //.......................Timers.............................
-void callBackTimerBtnDebounce(TimerHandle_t xTimer){
+void callBackTimerBtnDebounce(TimerHandle_t xTimer)
+{
   btnDebounce = false;
   xTimerStop(xTimerBtnDebounce, 0);
+}
+
+void callBackTimerReadWeightTimeout(TimerHandle_t xTimer)
+{
+  vTaskSuspend(taskReadWeightHandle);
+  xTimerStop(xTimerReadWeightTimeout, 0);
 }
 
 //......................ISR.................................
 void btnStartISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN START");
+    vTaskResume(taskReadWeightHandle);
+    xTimerStart(xTimerReadWeightTimeout, 0);
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
   }
@@ -203,7 +214,8 @@ void btnStartISRCallBack()
 
 void btnOrganicISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN ORGANIC");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
@@ -212,7 +224,8 @@ void btnOrganicISRCallBack()
 
 void btnGlassISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN GLASS");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
@@ -221,7 +234,8 @@ void btnGlassISRCallBack()
 
 void btnMetalISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN METAL");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
@@ -230,7 +244,8 @@ void btnMetalISRCallBack()
 
 void btnPaperISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN PAPER");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
@@ -239,7 +254,8 @@ void btnPaperISRCallBack()
 
 void btnPlasticISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN PLASTIC");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
@@ -248,7 +264,8 @@ void btnPlasticISRCallBack()
 
 void btnTareISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN TARE");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
@@ -257,7 +274,8 @@ void btnTareISRCallBack()
 
 void btnCalibrateISRCallBack()
 {
-  if(!btnDebounce){
+  if (!btnDebounce)
+  {
     Serial.println("BTN CALIBRATE");
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
