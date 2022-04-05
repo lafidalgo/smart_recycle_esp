@@ -33,6 +33,7 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 /*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
 unsigned long t = 0;
+bool btnDebounce = 0;
 
 /*Variáveis para armazenamento do handle das tasks*/
 TaskHandle_t taskReadWeightHandle = NULL;
@@ -41,18 +42,26 @@ TaskHandle_t taskReadWeightHandle = NULL;
 
 // SemaphoreHandle_t xSemaphoreMasterMode;
 
-// TimerHandle_t xTimerClose;
+TimerHandle_t xTimerBtnDebounce;
 
 /*Protótipos das Tasks*/
 void vTaskReadWeight(void *pvParameters);
 
-// void callBackTimerClose(TimerHandle_t xTimer);
+/*Timer Callbacks*/
+void callBackTimerBtnDebounce(TimerHandle_t xTimer);
 
 /*Funções*/
 void calibrate(void);
 void initButtons(void);
 
-// void btnMasterISRCallBack();
+void btnStartISRCallBack();
+void btnOrganicISRCallBack();
+void btnGlassISRCallBack();
+void btnMetalISRCallBack();
+void btnPaperISRCallBack();
+void btnPlasticISRCallBack();
+void btnTareISRCallBack();
+void btnCalibrateISRCallBack();
 
 void setup()
 {
@@ -75,13 +84,19 @@ void setup()
   }*/
 
   /*Criação Timers*/
-  // xTimerClose = xTimerCreate("TIMER CLOSE",pdMS_TO_TICKS(5000),pdTRUE,0,callBackTimerClose);
-  // xTimerStart(xTimerClose, 0);
+  xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE",pdMS_TO_TICKS(500),pdTRUE,0,callBackTimerBtnDebounce);
 
   /*Criação Interrupções*/
-  // attachInterrupt(digitalPinToInterrupt(btnStart), btnMasterISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnOrganic), btnOrganicISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnGlass), btnGlassISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnMetal), btnMetalISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnPaper), btnPaperISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnPlastic), btnPlasticISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnTare), btnTareISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnCalibrate), btnCalibrateISRCallBack, FALLING);
 
-  /*criação Tasks*/
+  /*Criação Tasks*/
   if (xTaskCreatePinnedToCore(vTaskReadWeight, "TASK READ WEIGHT", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskReadWeightHandle, APP_CPU_NUM) == pdFAIL)
   {
     Serial.println("Não foi possível criar a Task Read Weight");
@@ -171,14 +186,83 @@ void vTaskReadWeight(void *pvParameters)
 }
 
 //.......................Timers.............................
-/*void callBackTimerClose(TimerHandle_t xTimer){
-
-}*/
+void callBackTimerBtnDebounce(TimerHandle_t xTimer){
+  btnDebounce = false;
+  xTimerStop(xTimerBtnDebounce, 0);
+}
 
 //......................ISR.................................
-/*void btnMasterISRCallBack(){
+void btnStartISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN START");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
 
-}*/
+void btnOrganicISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN ORGANIC");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
+
+void btnGlassISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN GLASS");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
+
+void btnMetalISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN METAL");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
+
+void btnPaperISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN PAPER");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
+
+void btnPlasticISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN PLASTIC");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
+
+void btnTareISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN TARE");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
+
+void btnCalibrateISRCallBack()
+{
+  if(!btnDebounce){
+    Serial.println("BTN CALIBRATE");
+    btnDebounce = true;
+    xTimerStart(xTimerBtnDebounce, 0);
+  }
+}
 
 //......................Funções.............................
 void calibrate(void)
