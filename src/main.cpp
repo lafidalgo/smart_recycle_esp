@@ -169,40 +169,20 @@ void vTaskReadWeight(void *pvParameters)
     // get smoothed value from the dataset:
     if (newDataReady)
     {
-      if (millis() > t + serialPrintInterval)
-      {
-        float i = LoadCell.getData();
-        Serial.print("Load_cell output val: ");
-        Serial.println(i);
+      float i = LoadCell.getData();
+      Serial.print("Load_cell output val: ");
+      Serial.println(i);
 
-        lcd.clear();
-        lcd.print("Peso:");
-        lcd.setCursor(0, 1);
-        lcd.print(i / 1000);
-        lcd.print(" kg");
+      lcd.clear();
+      lcd.print("Peso:");
+      lcd.setCursor(0, 1);
+      lcd.print(i / 1000);
+      lcd.print(" kg");
 
-        newDataReady = 0;
-        t = millis();
-      }
+      newDataReady = 0;
     }
 
-    // receive command from serial terminal
-    if (Serial.available() > 0)
-    {
-      char inByte = Serial.read();
-      if (inByte == 't')
-        LoadCell.tareNoDelay(); // tare
-      else if (inByte == 'r')
-        calibrate(); // calibrate
-    }
-
-    // check if last tare operation is complete
-    if (LoadCell.getTareStatus() == true)
-    {
-      Serial.println("Tare complete");
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(serialPrintInterval));
   }
 }
 
@@ -211,7 +191,13 @@ void vTaskTare(void *pvParameters)
   while (1)
   {
     Serial.println("Task tare");
-    // calibrate();
+    LoadCell.tareNoDelay();
+
+    if (LoadCell.getTareStatus() == true)
+    {
+      Serial.println("Tare complete");
+    }
+
     vTaskSuspend(taskTareHandle);
   }
 }
