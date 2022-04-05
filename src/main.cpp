@@ -53,7 +53,7 @@ TaskHandle_t taskReadTimeoutHandle = NULL;
 QueueHandle_t xFilaTrashType;
 QueueHandle_t xFilaTrashWeight;
 
-// SemaphoreHandle_t xSemaphoreSendWeight;
+SemaphoreHandle_t xSemaphoreCalibrate;
 
 TimerHandle_t xTimerBtnDebounce;
 TimerHandle_t xTimerReadWeightTimeout;
@@ -97,15 +97,15 @@ void setup()
   xFilaTrashWeight = xQueueCreate(1, sizeof(float));
 
   /*Criação Semaphores*/
-  // xSemaphoreSendWeight = xSemaphoreCreateBinary();
+  xSemaphoreCalibrate = xSemaphoreCreateBinary();
 
-  /*if(xSemaphoreSendWeight == NULL){
+  if(xSemaphoreCalibrate == NULL){
    Serial.println("Não foi possível criar o semaforo!");
    ESP.restart();
-  }*/
+  }
 
   /*Criação Timers*/
-  xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE", pdMS_TO_TICKS(500), pdTRUE, 0, callBackTimerBtnDebounce);
+  xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE", pdMS_TO_TICKS(1000), pdTRUE, 0, callBackTimerBtnDebounce);
   xTimerReadWeightTimeout = xTimerCreate("TIMER READ WEIGHT TIMEOUT", pdMS_TO_TICKS(10000), pdTRUE, 0, callBackTimerReadWeightTimeout);
 
   /*Criação Interrupções*/
@@ -207,7 +207,7 @@ void vTaskReadWeight(void *pvParameters)
     if (newDataReady)
     {
       float i = LoadCell.getData();
-      Serial.print("Load_cell output val: ");
+      Serial.print("Measured weight: ");
       Serial.println(i);
       xQueueOverwrite(xFilaTrashWeight, &i);
       lcd.backlight();
@@ -231,7 +231,6 @@ void vTaskSendWeight(void *pvParameters)
   while (1)
   {
     Serial.println("Task send weight");
-    // xSemaphoreTake(xSemaphoreSendWeight, portMAX_DELAY);
     vTaskSuspend(taskReadWeightHandle);
     xTimerStop(xTimerReadWeightTimeout, 0);
     xQueueReceive(xFilaTrashType, &trashType, portMAX_DELAY);
@@ -297,11 +296,68 @@ void vTaskCalibrate(void *pvParameters)
 
     lcd.backlight();
     lcd.setCursor(0, 0);
+    lcd.print("Iniciando");
+    lcd.setCursor(0, 1);
+    lcd.print("calibracao");
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    Serial.println("Place the load cell an a level stable surface.");
+    Serial.println("Remove any load applied to the load cell.");
+    Serial.println("Press Tare button to set the tare offset.");
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Remova o peso e");
+    lcd.setCursor(0, 1);
+    lcd.print("clique em 'Tare'");
+
+    LoadCell.update();
+    xSemaphoreTake(xSemaphoreCalibrate, portMAX_DELAY);
+    LoadCell.tare();
+    while (LoadCell.getTareStatus() == false)
+    {
+      Serial.print(".");
+      vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    Serial.println("Tare complete");
+
+    Serial.println("Now, place your known mass on the loadcell.");
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Adicione o peso e");
+    lcd.setCursor(0, 1);
+    lcd.print("clique em 'Tare'");
+
+    float known_mass = weightReference;
+
+    LoadCell.update();
+    xSemaphoreTake(xSemaphoreCalibrate, portMAX_DELAY);
+
+    LoadCell.refreshDataSet();                                          // refresh the dataset to be sure that the known mass is measured correct
+    float newCalibrationValue = LoadCell.getNewCalibration(known_mass); // get the new calibration value
+
+  #if defined(ESP8266) || defined(ESP32)
+    EEPROM.begin(512);
+  #endif
+    EEPROM.put(calVal_eepromAdress, newCalibrationValue);
+  #if defined(ESP8266) || defined(ESP32)
+    EEPROM.commit();
+  #endif
+    EEPROM.get(calVal_eepromAdress, newCalibrationValue);
+    Serial.print("Value ");
+    Serial.print(newCalibrationValue);
+    Serial.print(" saved to EEPROM address: ");
+    Serial.println(calVal_eepromAdress);
+
+    Serial.println("End calibration");
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
     lcd.print("Calibracao");
     lcd.setCursor(0, 1);
     lcd.print("com sucesso");
-
-    calibrate();
 
     vTaskDelay(pdMS_TO_TICKS(3000));
     lcd.clear();
@@ -353,7 +409,6 @@ void btnStartISRCallBack()
   {
     Serial.println("BTN START");
     vTaskResume(taskReadWeightHandle);
-    // xSemaphoreGive(xSemaphoreSendWeight);
     xTimerStart(xTimerReadWeightTimeout, 0);
     btnDebounce = true;
     readWeightStarted = true;
@@ -428,6 +483,8 @@ void btnPlasticISRCallBack()
 
 void btnTareISRCallBack()
 {
+  BaseType_t xHighPriorityTaskWoken = pdFALSE;
+
   if (!btnDebounce && !readWeightStarted && !tareStarted && !calibrationStarted)
   {
     Serial.println("BTN TARE");
@@ -435,6 +492,10 @@ void btnTareISRCallBack()
     btnDebounce = true;
     tareStarted = true;
     xTimerStart(xTimerBtnDebounce, 0);
+  }
+  if (!btnDebounce && !readWeightStarted && !tareStarted && calibrationStarted)
+  {
+    xSemaphoreGiveFromISR(xSemaphoreCalibrate,&xHighPriorityTaskWoken);
   }
 }
 
