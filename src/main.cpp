@@ -4,6 +4,10 @@
 #include <LiquidCrystal_I2C.h>
 #include <ArduinoJson.h>
 #include <HX711_ADC.h>
+#include "secrets.h"
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include "WiFi.h"
 #if defined(ESP8266) || defined(ESP32) || defined(AVR)
 #include <EEPROM.h>
 #endif
@@ -29,10 +33,14 @@
 
 /*Constantes*/
 #define weightReference 2000 // 2 kg
+#define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
+#define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
 
 /*Construtores*/
 HX711_ADC LoadCell(HX711Dout, HX711Sck);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+WiFiClientSecure net = WiFiClientSecure();
+PubSubClient client(net);
 
 /*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
@@ -40,10 +48,10 @@ float calibrationValue;
 unsigned long t = 0;
 
 /*Variáveis Globais de Estado*/
-bool btnDebounce = 0;
-bool readWeightStarted = 0;
-bool tareStarted = 0;
-bool calibrationStarted = 0;
+volatile bool btnDebounce = 0;
+volatile bool readWeightStarted = 0;
+volatile bool tareStarted = 0;
+volatile bool calibrationStarted = 0;
 
 /*Variáveis para armazenamento do handle das tasks, queues, semaphores e timers*/
 TaskHandle_t taskReadWeightHandle = NULL;
@@ -74,6 +82,8 @@ void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
 /*Funções*/
 void initButtons(void);
 void publishMessage(int trashType, float trashWeight);
+void connectAWS(void);
+void messageHandler(char *topic, byte *payload, unsigned int length);
 
 /*ISRs*/
 void btnStartISRCallBack();
@@ -123,7 +133,7 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(btnCalibrate), btnCalibrateISRCallBack, FALLING);
 
   /*Criação Tasks*/
-  if (xTaskCreatePinnedToCore(vTaskReadWeight, "TASK READ WEIGHT", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskReadWeightHandle, APP_CPU_NUM) == pdFAIL)
+  if (xTaskCreatePinnedToCore(vTaskReadWeight, "TASK READ WEIGHT", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &taskReadWeightHandle, APP_CPU_NUM) == pdFAIL)
   {
     Serial.println("Não foi possível criar a Task Read Weight");
     ESP.restart();
@@ -137,14 +147,14 @@ void setup()
   }
   vTaskSuspend(taskSendWeightHandle);
 
-  if (xTaskCreatePinnedToCore(vTaskTare, "TASK TARE", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskTareHandle, APP_CPU_NUM) == pdFAIL)
+  if (xTaskCreatePinnedToCore(vTaskTare, "TASK TARE", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &taskTareHandle, APP_CPU_NUM) == pdFAIL)
   {
     Serial.println("Não foi possível criar a Task Tare");
     ESP.restart();
   }
   vTaskSuspend(taskTareHandle);
 
-  if (xTaskCreatePinnedToCore(vTaskCalibrate, "TASK CALIBRATE", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskCalibrateHandle, APP_CPU_NUM) == pdFAIL)
+  if (xTaskCreatePinnedToCore(vTaskCalibrate, "TASK CALIBRATE", configMINIMAL_STACK_SIZE + 2048, NULL, 1, &taskCalibrateHandle, APP_CPU_NUM) == pdFAIL)
   {
     Serial.println("Não foi possível criar a Task Calibrate");
     ESP.restart();
@@ -190,8 +200,12 @@ void setup()
   lcd.setCursor(0, 0);
   lcd.print("Balanca");
   lcd.setCursor(0, 1);
-  lcd.print("iniciada");
+  lcd.print("ligada!");
   vTaskDelay(pdMS_TO_TICKS(3000));
+  
+  /*Initialize Connection*/
+  connectAWS();
+
   lcd.clear();
   lcd.noBacklight();
 }
@@ -199,6 +213,7 @@ void setup()
 //.......................Loop Function.............................
 void loop()
 {
+  client.loop();
   vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
@@ -461,7 +476,7 @@ void btnGlassISRCallBack()
 void btnMetalISRCallBack()
 {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  
+
   int trashType = 3;
   if (!btnDebounce && readWeightStarted)
   {
@@ -551,6 +566,7 @@ void initButtons(void)
 void publishMessage(int trashType, float trashWeight)
 {
   StaticJsonDocument<200> doc;
+  doc["macAddress"] = WiFi.macAddress();
   doc["trashType"] = trashType;
   doc["trashWeight"] = trashWeight;
   char jsonBuffer[512];
@@ -558,5 +574,80 @@ void publishMessage(int trashType, float trashWeight)
 
   Serial.println(jsonBuffer);
 
-  // client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+  client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+}
+
+void connectAWS()
+{
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to Wi-Fi");
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Conectando ao");
+  lcd.setCursor(0, 1);
+  lcd.print("Wi-Fi...");
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    vTaskDelay(pdMS_TO_TICKS(500));
+    Serial.print(".");
+  }
+
+  Serial.println(".Connected!");
+
+  // Configure WiFiClientSecure to use the AWS IoT device credentials
+  net.setCACert(AWS_CERT_CA);
+  net.setCertificate(AWS_CERT_CRT);
+  net.setPrivateKey(AWS_CERT_PRIVATE);
+
+  // Connect to the MQTT broker on the AWS endpoint we defined earlier
+  client.setServer(AWS_IOT_ENDPOINT, 8883);
+
+  // Create a message handler
+  client.setCallback(messageHandler);
+
+  Serial.print("Connecting to AWS IOT");
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Conectando ao");
+  lcd.setCursor(0, 1);
+  lcd.print("AWS...");
+
+  while (!client.connect(THINGNAME))
+  {
+    Serial.print(".");
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+
+  if (!client.connected())
+  {
+    Serial.println(".AWS IoT Timeout!");
+    return;
+  }
+
+  // Subscribe to a topic
+  client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
+
+  Serial.println(".AWS IoT Connected!");
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Conectado!");
+
+  vTaskDelay(pdMS_TO_TICKS(2000));
+}
+
+void messageHandler(char *topic, byte *payload, unsigned int length)
+{
+  Serial.print("incoming: ");
+  Serial.println(topic);
+
+  StaticJsonDocument<200> doc;
+  deserializeJson(doc, payload);
+  const char *message = doc["message"];
+  Serial.println(message);
 }
