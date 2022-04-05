@@ -37,6 +37,8 @@ bool btnDebounce = 0;
 
 /*Variáveis para armazenamento do handle das tasks*/
 TaskHandle_t taskReadWeightHandle = NULL;
+TaskHandle_t taskTareHandle = NULL;
+TaskHandle_t taskCalibrateHandle = NULL;
 
 // QueueHandle_t xFilaRGBRed;
 
@@ -47,6 +49,8 @@ TimerHandle_t xTimerReadWeightTimeout;
 
 /*Protótipos das Tasks*/
 void vTaskReadWeight(void *pvParameters);
+void vTaskTare(void *pvParameters);
+void vTaskCalibrate(void *pvParameters);
 
 /*Timer Callbacks*/
 void callBackTimerBtnDebounce(TimerHandle_t xTimer);
@@ -106,6 +110,20 @@ void setup()
     ESP.restart();
   }
   vTaskSuspend(taskReadWeightHandle);
+
+  if (xTaskCreatePinnedToCore(vTaskTare, "TASK TARE", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskTareHandle, APP_CPU_NUM) == pdFAIL)
+  {
+    Serial.println("Não foi possível criar a Task Tare");
+    ESP.restart();
+  }
+  vTaskSuspend(taskTareHandle);
+
+  if (xTaskCreatePinnedToCore(vTaskCalibrate, "TASK CALIBRATE", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskCalibrateHandle, APP_CPU_NUM) == pdFAIL)
+  {
+    Serial.println("Não foi possível criar a Task Calibrate");
+    ESP.restart();
+  }
+  vTaskSuspend(taskCalibrateHandle);
 
   LoadCell.begin();
   // LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
@@ -183,6 +201,28 @@ void vTaskReadWeight(void *pvParameters)
     {
       Serial.println("Tare complete");
     }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+void vTaskTare(void *pvParameters)
+{
+  while (1)
+  {
+    Serial.println("Task tare");
+    // calibrate();
+    vTaskSuspend(taskTareHandle);
+  }
+}
+
+void vTaskCalibrate(void *pvParameters)
+{
+  while (1)
+  {
+    Serial.println("Task calibrate");
+    calibrate();
+    vTaskSuspend(taskCalibrateHandle);
   }
 }
 
@@ -267,6 +307,7 @@ void btnTareISRCallBack()
   if (!btnDebounce)
   {
     Serial.println("BTN TARE");
+    vTaskResume(taskTareHandle);
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
   }
@@ -277,6 +318,7 @@ void btnCalibrateISRCallBack()
   if (!btnDebounce)
   {
     Serial.println("BTN CALIBRATE");
+    vTaskResume(taskCalibrateHandle);
     btnDebounce = true;
     xTimerStart(xTimerBtnDebounce, 0);
   }
