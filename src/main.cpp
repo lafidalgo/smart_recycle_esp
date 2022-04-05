@@ -39,12 +39,13 @@ const int calVal_eepromAdress = 0;
 float calibrationValue;
 unsigned long t = 0;
 
+/*Variáveis Globais de Estado*/
 bool btnDebounce = 0;
 bool readWeightStarted = 0;
 bool tareStarted = 0;
 bool calibrationStarted = 0;
 
-/*Variáveis para armazenamento do handle das tasks*/
+/*Variáveis para armazenamento do handle das tasks, queues, semaphores e timers*/
 TaskHandle_t taskReadWeightHandle = NULL;
 TaskHandle_t taskSendWeightHandle = NULL;
 TaskHandle_t taskTareHandle = NULL;
@@ -74,6 +75,7 @@ void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
 void initButtons(void);
 void publishMessage(int trashType, float trashWeight);
 
+/*ISRs*/
 void btnStartISRCallBack();
 void btnOrganicISRCallBack();
 void btnGlassISRCallBack();
@@ -83,6 +85,7 @@ void btnPlasticISRCallBack();
 void btnTareISRCallBack();
 void btnCalibrateISRCallBack();
 
+//.......................Setup Function.............................
 void setup()
 {
   Serial.begin(115200);
@@ -180,6 +183,7 @@ void setup()
   while (!LoadCell.update())
     ;
 
+  /*Initialize LCD*/
   lcd.init();
   lcd.backlight();
   lcd.clear();
@@ -192,6 +196,7 @@ void setup()
   lcd.noBacklight();
 }
 
+//.......................Loop Function.............................
 void loop()
 {
   vTaskDelay(pdMS_TO_TICKS(1000));
@@ -408,7 +413,7 @@ void callBackTimerReadWeightTimeout(TimerHandle_t xTimer)
   xTimerStop(xTimerReadWeightTimeout, 0);
 }
 
-//......................ISR.................................
+//......................ISRs.................................
 void btnStartISRCallBack()
 {
   if (!btnDebounce && !readWeightStarted && !tareStarted && !calibrationStarted)
