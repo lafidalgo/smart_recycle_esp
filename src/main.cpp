@@ -36,6 +36,7 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 /*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
+float calibrationValue;
 unsigned long t = 0;
 
 bool btnDebounce = 0;
@@ -99,9 +100,10 @@ void setup()
   /*Criação Semaphores*/
   xSemaphoreCalibrate = xSemaphoreCreateBinary();
 
-  if(xSemaphoreCalibrate == NULL){
-   Serial.println("Não foi possível criar o semaforo!");
-   ESP.restart();
+  if (xSemaphoreCalibrate == NULL)
+  {
+    Serial.println("Não foi possível criar o semaforo!");
+    ESP.restart();
   }
 
   /*Criação Timers*/
@@ -154,25 +156,30 @@ void setup()
   }
   vTaskSuspend(taskReadTimeoutHandle);
 
+  /*Initialize Load Cell*/
   LoadCell.begin();
   // LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
+
+#if defined(ESP8266) || defined(ESP32)
+  EEPROM.begin(512); // uncomment this if you use ESP8266/ESP32 and want to fetch the calibration value from eeprom
+#endif
+  EEPROM.get(calVal_eepromAdress, calibrationValue); // uncomment this if you want to fetch the calibration value from eeprom
+
   unsigned long stabilizingtime = 2000; // preciscion right after power-up can be improved by adding a few seconds of stabilizing time
   boolean _tare = true;                 // set this to false if you don't want tare to be performed in the next step
   LoadCell.start(stabilizingtime, _tare);
   if (LoadCell.getTareTimeoutFlag() || LoadCell.getSignalTimeoutFlag())
   {
     Serial.println("Timeout, check MCU>HX711 wiring and pin designations");
-    while (1)
-      ;
+    ESP.restart();
   }
   else
   {
-    LoadCell.setCalFactor(1.0); // user set calibration value (float), initial value 1.0 may be used for this sketch
+    LoadCell.setCalFactor(calibrationValue); // set calibration value (float)
     Serial.println("Startup is complete");
   }
   while (!LoadCell.update())
     ;
-  calibrate(); // start calibration procedure
 
   lcd.init();
   lcd.backlight();
@@ -338,13 +345,13 @@ void vTaskCalibrate(void *pvParameters)
     LoadCell.refreshDataSet();                                          // refresh the dataset to be sure that the known mass is measured correct
     float newCalibrationValue = LoadCell.getNewCalibration(known_mass); // get the new calibration value
 
-  #if defined(ESP8266) || defined(ESP32)
+#if defined(ESP8266) || defined(ESP32)
     EEPROM.begin(512);
-  #endif
+#endif
     EEPROM.put(calVal_eepromAdress, newCalibrationValue);
-  #if defined(ESP8266) || defined(ESP32)
+#if defined(ESP8266) || defined(ESP32)
     EEPROM.commit();
-  #endif
+#endif
     EEPROM.get(calVal_eepromAdress, newCalibrationValue);
     Serial.print("Value ");
     Serial.print(newCalibrationValue);
@@ -495,7 +502,7 @@ void btnTareISRCallBack()
   }
   if (!btnDebounce && !readWeightStarted && !tareStarted && calibrationStarted)
   {
-    xSemaphoreGiveFromISR(xSemaphoreCalibrate,&xHighPriorityTaskWoken);
+    xSemaphoreGiveFromISR(xSemaphoreCalibrate, &xHighPriorityTaskWoken);
   }
 }
 
