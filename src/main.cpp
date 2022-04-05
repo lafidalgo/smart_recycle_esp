@@ -416,19 +416,22 @@ void callBackTimerReadWeightTimeout(TimerHandle_t xTimer)
 //......................ISRs.................................
 void btnStartISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   if (!btnDebounce && !readWeightStarted && !tareStarted && !calibrationStarted)
   {
     Serial.println("BTN START");
     vTaskResume(taskReadWeightHandle);
-    xTimerStart(xTimerReadWeightTimeout, 0);
+    xTimerStartFromISR(xTimerReadWeightTimeout, &xHigherPriorityTaskWoken);
     btnDebounce = true;
     readWeightStarted = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnOrganicISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
   int trashType = 1;
   if (!btnDebounce && readWeightStarted)
   {
@@ -436,12 +439,14 @@ void btnOrganicISRCallBack()
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnGlassISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
   int trashType = 2;
   if (!btnDebounce && readWeightStarted)
   {
@@ -449,12 +454,14 @@ void btnGlassISRCallBack()
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnMetalISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  
   int trashType = 3;
   if (!btnDebounce && readWeightStarted)
   {
@@ -462,12 +469,14 @@ void btnMetalISRCallBack()
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnPaperISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
   int trashType = 4;
   if (!btnDebounce && readWeightStarted)
   {
@@ -475,12 +484,14 @@ void btnPaperISRCallBack()
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnPlasticISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
   int trashType = 5;
   if (!btnDebounce && readWeightStarted)
   {
@@ -488,13 +499,13 @@ void btnPlasticISRCallBack()
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnTareISRCallBack()
 {
-  BaseType_t xHighPriorityTaskWoken = pdFALSE;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   if (!btnDebounce && !readWeightStarted && !tareStarted && !calibrationStarted)
   {
@@ -502,23 +513,25 @@ void btnTareISRCallBack()
     vTaskResume(taskTareHandle);
     btnDebounce = true;
     tareStarted = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
   if (!btnDebounce && !readWeightStarted && !tareStarted && calibrationStarted)
   {
-    xSemaphoreGiveFromISR(xSemaphoreCalibrate, &xHighPriorityTaskWoken);
+    xSemaphoreGiveFromISR(xSemaphoreCalibrate, &xHigherPriorityTaskWoken);
   }
 }
 
 void btnCalibrateISRCallBack()
 {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
   if (!btnDebounce && !readWeightStarted && !tareStarted && !calibrationStarted)
   {
     Serial.println("BTN CALIBRATE");
     vTaskResume(taskCalibrateHandle);
     btnDebounce = true;
     calibrationStarted = true;
-    xTimerStart(xTimerBtnDebounce, 0);
+    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
 
