@@ -1,31 +1,93 @@
+/*Biblioteca do Arduino*/
 #include <Arduino.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-
 #include <HX711_ADC.h>
 #if defined(ESP8266) || defined(ESP32) || defined(AVR)
 #include <EEPROM.h>
 #endif
 
-// pins:
-const int HX711_dout = 4; // mcu > HX711 dout pin
-const int HX711_sck = 5;  // mcu > HX711 sck pin
+/*Bibliotecas FreeRTOS */
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/timers.h"
 
-// HX711 constructor:
-HX711_ADC LoadCell(HX711_dout, HX711_sck);
+/*Mapeamento de pinos*/
+#define HX711Dout 4
+#define HX711Sck 5
+#define btnStart 15
+#define btnOrganic 2
+#define btnGlass 16
+#define btnMetal 17
+#define btnPaper 18
+#define btnPlastic 19
+#define btnTare 23
+#define btnCalibrate 23
+
+/*Construtores*/
+HX711_ADC LoadCell(HX711Dout, HX711Sck);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-void calibrate(void);
-
+/*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
 unsigned long t = 0;
+
+/*Variáveis para armazenamento do handle das tasks*/
+TaskHandle_t taskReadWeightHandle = NULL;
+
+// QueueHandle_t xFilaRGBRed;
+
+// SemaphoreHandle_t xSemaphoreMasterMode;
+
+// TimerHandle_t xTimerClose;
+
+/*Protótipos das Tasks*/
+void vTaskReadWeight(void *pvParameters);
+
+// void callBackTimerClose(TimerHandle_t xTimer);
+
+/*Funções*/
+void calibrate(void);
+void initButtons(void);
+
+// void btnMasterISRCallBack();
 
 void setup()
 {
   Serial.begin(115200);
-  delay(10);
+  vTaskDelay(pdMS_TO_TICKS(10));
+  initButtons();
+
   Serial.println();
   Serial.println("Starting...");
+
+  /*Criação Queues*/
+  // xFilaRGBRed = xQueueCreate(1, sizeof(int));
+
+  /*Criação Semaphores*/
+  // xSemaphoreMasterMode = xSemaphoreCreateBinary();
+
+  /*if(xSemaphoreMasterMode == NULL){
+   Serial.println("Não foi possível criar o semaforo!");
+   ESP.restart();
+  }*/
+
+  /*Criação Timers*/
+  // xTimerClose = xTimerCreate("TIMER CLOSE",pdMS_TO_TICKS(5000),pdTRUE,0,callBackTimerClose);
+  // xTimerStart(xTimerClose, 0);
+
+  /*Criação Interrupções*/
+  // attachInterrupt(digitalPinToInterrupt(btnStart), btnMasterISRCallBack, FALLING);
+
+  /*criação Tasks*/
+  if (xTaskCreatePinnedToCore(vTaskReadWeight, "TASK READ WEIGHT", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskReadWeightHandle, APP_CPU_NUM) == pdFAIL)
+  {
+    Serial.println("Não foi possível criar a Task Read Weight");
+    ESP.restart();
+  }
+  vTaskSuspend(taskReadWeightHandle);
 
   LoadCell.begin();
   // LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
@@ -49,55 +111,77 @@ void setup()
 
   lcd.init();
   lcd.backlight();
+
+  vTaskResume(taskReadWeightHandle);
 }
 
 void loop()
 {
-  static boolean newDataReady = 0;
-  const int serialPrintInterval = 500; // increase value to slow down serial print activity
+  vTaskDelay(pdMS_TO_TICKS(1000));
+}
 
-  // check for new data/start next conversion:
-  if (LoadCell.update())
-    newDataReady = true;
-
-  // get smoothed value from the dataset:
-  if (newDataReady)
+//.......................Tasks.............................
+void vTaskReadWeight(void *pvParameters)
+{
+  while (1)
   {
-    if (millis() > t + serialPrintInterval)
+    static boolean newDataReady = 0;
+    const int serialPrintInterval = 500; // increase value to slow down serial print activity
+
+    // check for new data/start next conversion:
+    if (LoadCell.update())
+      newDataReady = true;
+
+    // get smoothed value from the dataset:
+    if (newDataReady)
     {
-      float i = LoadCell.getData();
-      Serial.print("Load_cell output val: ");
-      Serial.println(i);
+      if (millis() > t + serialPrintInterval)
+      {
+        float i = LoadCell.getData();
+        Serial.print("Load_cell output val: ");
+        Serial.println(i);
 
-      lcd.clear();
-      lcd.print("Peso:");
-      lcd.setCursor(0, 1);
-      lcd.print(i / 1000);
-      lcd.print(" kg");
+        lcd.clear();
+        lcd.print("Peso:");
+        lcd.setCursor(0, 1);
+        lcd.print(i / 1000);
+        lcd.print(" kg");
 
-      newDataReady = 0;
-      t = millis();
+        newDataReady = 0;
+        t = millis();
+      }
     }
-  }
 
-  // receive command from serial terminal
-  if (Serial.available() > 0)
-  {
-    char inByte = Serial.read();
-    if (inByte == 't')
-      LoadCell.tareNoDelay(); // tare
-    else if (inByte == 'r')
-      calibrate(); // calibrate
-  }
+    // receive command from serial terminal
+    if (Serial.available() > 0)
+    {
+      char inByte = Serial.read();
+      if (inByte == 't')
+        LoadCell.tareNoDelay(); // tare
+      else if (inByte == 'r')
+        calibrate(); // calibrate
+    }
 
-  // check if last tare operation is complete
-  if (LoadCell.getTareStatus() == true)
-  {
-    Serial.println("Tare complete");
+    // check if last tare operation is complete
+    if (LoadCell.getTareStatus() == true)
+    {
+      Serial.println("Tare complete");
+    }
   }
 }
 
-void calibrate()
+//.......................Timers.............................
+/*void callBackTimerClose(TimerHandle_t xTimer){
+
+}*/
+
+//......................ISR.................................
+/*void btnMasterISRCallBack(){
+
+}*/
+
+//......................Funções.............................
+void calibrate(void)
 {
   Serial.println("***");
   Serial.println("Start calibration:");
@@ -190,4 +274,16 @@ void calibrate()
   Serial.println("To re-calibrate, send 'r' from serial monitor.");
   Serial.println("For manual edit of the calibration value, send 'c' from serial monitor.");
   Serial.println("***");
+}
+
+void initButtons(void)
+{
+  pinMode(btnStart, INPUT_PULLUP);
+  pinMode(btnOrganic, INPUT_PULLUP);
+  pinMode(btnGlass, INPUT_PULLUP);
+  pinMode(btnMetal, INPUT_PULLUP);
+  pinMode(btnPaper, INPUT_PULLUP);
+  pinMode(btnPlastic, INPUT_PULLUP);
+  pinMode(btnTare, INPUT_PULLUP);
+  pinMode(btnCalibrate, INPUT_PULLUP);
 }
