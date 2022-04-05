@@ -262,15 +262,22 @@ void vTaskTare(void *pvParameters)
 
     lcd.backlight();
     lcd.setCursor(0, 0);
+    lcd.print("Tarando a");
+    lcd.setCursor(0, 1);
+    lcd.print("balanca...");
+
+    LoadCell.tare();
+    while (LoadCell.getTareStatus() == false)
+    {
+      Serial.print(".");
+      vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    Serial.println("Tare complete");
+
+    lcd.setCursor(0, 0);
     lcd.print("Balanca tarada");
     lcd.setCursor(0, 1);
     lcd.print("com sucesso");
-
-    LoadCell.tareNoDelay();
-    if (LoadCell.getTareStatus() == true)
-    {
-      Serial.println("Tare complete");
-    }
 
     vTaskDelay(pdMS_TO_TICKS(3000));
     lcd.clear();
