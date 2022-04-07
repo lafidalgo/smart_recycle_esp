@@ -34,8 +34,9 @@
 /*Constantes*/
 #define weightReference 2000 // 2 kg
 #define weightRepeatMeasureReference 10
-#define weightMeasureInterval 50 // Time in ms between weight measurements
-#define measureTimeout 10000 // Timeout in ms to measure weight
+#define weightMeasureInterval 50      // Time in ms between weight measurements
+#define measureTimeout 10000          // Timeout in ms to measure weight
+#define checkConnectionInterval 10000 // Time in ms to check connection
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
 
@@ -63,6 +64,7 @@ TaskHandle_t taskSendWeightHandle = NULL;
 TaskHandle_t taskTareHandle = NULL;
 TaskHandle_t taskCalibrateHandle = NULL;
 TaskHandle_t taskReadTimeoutHandle = NULL;
+TaskHandle_t taskCheckConnectionHandle = NULL;
 
 QueueHandle_t xFilaTrashType;
 QueueHandle_t xFilaTrashWeight;
@@ -71,6 +73,7 @@ SemaphoreHandle_t xSemaphoreCalibrate;
 
 TimerHandle_t xTimerBtnDebounce;
 TimerHandle_t xTimerReadWeightTimeout;
+TimerHandle_t xTimerCheckConnection;
 
 /*Protótipos das Tasks*/
 void vTaskReadWeight(void *pvParameters);
@@ -78,10 +81,12 @@ void vTaskSendWeight(void *pvParameters);
 void vTaskTare(void *pvParameters);
 void vTaskCalibrate(void *pvParameters);
 void vTaskReadTimeout(void *pvParameters);
+void vTaskCheckConnection(void *pvParameters);
 
 /*Timer Callbacks*/
 void callBackTimerBtnDebounce(TimerHandle_t xTimer);
 void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
+void callBackTimerCheckConnection(TimerHandle_t xTimer);
 
 /*Funções*/
 void initButtons(void);
@@ -125,6 +130,7 @@ void setup()
   /*Criação Timers*/
   xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE", pdMS_TO_TICKS(1000), pdTRUE, 0, callBackTimerBtnDebounce);
   xTimerReadWeightTimeout = xTimerCreate("TIMER READ WEIGHT TIMEOUT", pdMS_TO_TICKS(measureTimeout), pdTRUE, 0, callBackTimerReadWeightTimeout);
+  xTimerCheckConnection = xTimerCreate("TIMER CHECK CONNECTION", pdMS_TO_TICKS(checkConnectionInterval), pdTRUE, 0, callBackTimerCheckConnection);
 
   /*Criação Interrupções*/
   attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
@@ -172,6 +178,13 @@ void setup()
   }
   vTaskSuspend(taskReadTimeoutHandle);
 
+  if (xTaskCreatePinnedToCore(vTaskCheckConnection, "TASK CHECK CONNECTION", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &taskCheckConnectionHandle, APP_CPU_NUM) == pdFAIL)
+  {
+    Serial.println("Não foi possível criar a Task Check Connection");
+    ESP.restart();
+  }
+  vTaskSuspend(taskCheckConnectionHandle);
+
   /*Initialize Load Cell*/
   LoadCell.begin();
   // LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
@@ -212,6 +225,8 @@ void setup()
 
   lcd.clear();
   lcd.noBacklight();
+
+  xTimerStart(xTimerCheckConnection, 0);
 }
 
 //.......................Loop Function.............................
@@ -238,7 +253,8 @@ void vTaskReadWeight(void *pvParameters)
     if (repeatMeasureCount >= weightRepeatMeasureReference)
     {
       weightMeasured = weightMeasured / weightRepeatMeasureReference;
-      if(weightMeasured < 0){
+      if (weightMeasured < 0)
+      {
         weightMeasured = 0;
       }
       Serial.print("Measured weight: ");
@@ -427,6 +443,27 @@ void vTaskReadTimeout(void *pvParameters)
   }
 }
 
+void vTaskCheckConnection(void *pvParameters)
+{
+  while (1)
+  {
+    Serial.println("Task check connection");
+    if ((WiFi.status() != WL_CONNECTED))
+    {
+      Serial.println("WiFi connection failed... Restarting ESP...");
+      ESP.restart();
+    }
+    if (!client.connected())
+    {
+      Serial.println("MQTT connection failed... Restarting ESP...");
+      ESP.restart();
+    }
+
+    xTimerStart(xTimerCheckConnection, 0);
+    vTaskSuspend(taskCheckConnectionHandle);
+  }
+}
+
 //.......................Timers.............................
 void callBackTimerBtnDebounce(TimerHandle_t xTimer)
 {
@@ -438,6 +475,12 @@ void callBackTimerReadWeightTimeout(TimerHandle_t xTimer)
 {
   vTaskResume(taskReadTimeoutHandle);
   xTimerStop(xTimerReadWeightTimeout, 0);
+}
+
+void callBackTimerCheckConnection(TimerHandle_t xTimer)
+{
+  vTaskResume(taskCheckConnectionHandle);
+  xTimerStop(xTimerCheckConnection, 0);
 }
 
 //......................ISRs.................................
@@ -631,9 +674,9 @@ void connectAWS()
 
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Conectando ao");
+  lcd.print("Conectando a");
   lcd.setCursor(0, 1);
-  lcd.print("AWS...");
+  lcd.print("nuvem...");
 
   while (!client.connect(THINGNAME))
   {
