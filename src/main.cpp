@@ -37,6 +37,7 @@
 #define weightMeasureInterval 50      // Time in ms between weight measurements
 #define measureTimeout 10000          // Timeout in ms to measure weight
 #define checkConnectionInterval 10000 // Time in ms to check connection
+#define initTimeout 30000 // Timeout in ms to init
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
 
@@ -74,6 +75,7 @@ SemaphoreHandle_t xSemaphoreCalibrate;
 TimerHandle_t xTimerBtnDebounce;
 TimerHandle_t xTimerReadWeightTimeout;
 TimerHandle_t xTimerCheckConnection;
+TimerHandle_t xTimerInitTimeout;
 
 /*Protótipos das Tasks*/
 void vTaskReadWeight(void *pvParameters);
@@ -87,6 +89,7 @@ void vTaskCheckConnection(void *pvParameters);
 void callBackTimerBtnDebounce(TimerHandle_t xTimer);
 void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
 void callBackTimerCheckConnection(TimerHandle_t xTimer);
+void callBackTimerInitTimeout(TimerHandle_t xTimer);
 
 /*Funções*/
 void initButtons(void);
@@ -131,6 +134,8 @@ void setup()
   xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE", pdMS_TO_TICKS(1000), pdTRUE, 0, callBackTimerBtnDebounce);
   xTimerReadWeightTimeout = xTimerCreate("TIMER READ WEIGHT TIMEOUT", pdMS_TO_TICKS(measureTimeout), pdTRUE, 0, callBackTimerReadWeightTimeout);
   xTimerCheckConnection = xTimerCreate("TIMER CHECK CONNECTION", pdMS_TO_TICKS(checkConnectionInterval), pdTRUE, 0, callBackTimerCheckConnection);
+  xTimerInitTimeout = xTimerCreate("TIMER INIT TIMEOUT", pdMS_TO_TICKS(initTimeout), pdTRUE, 0, callBackTimerInitTimeout);
+  xTimerStart(xTimerInitTimeout, 0);
 
   /*Criação Interrupções*/
   attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
@@ -226,6 +231,7 @@ void setup()
   lcd.clear();
   lcd.noBacklight();
 
+  xTimerStop(xTimerInitTimeout, 0);
   xTimerStart(xTimerCheckConnection, 0);
 }
 
@@ -447,7 +453,7 @@ void vTaskCheckConnection(void *pvParameters)
 {
   while (1)
   {
-    Serial.println("Task check connection");
+    //Serial.println("Task check connection");
     if ((WiFi.status() != WL_CONNECTED))
     {
       Serial.println("WiFi connection failed... Restarting ESP...");
@@ -481,6 +487,12 @@ void callBackTimerCheckConnection(TimerHandle_t xTimer)
 {
   vTaskResume(taskCheckConnectionHandle);
   xTimerStop(xTimerCheckConnection, 0);
+}
+
+void callBackTimerInitTimeout(TimerHandle_t xTimer)
+{
+  Serial.println("Init timeout... Restarting ESP...");
+  ESP.restart();
 }
 
 //......................ISRs.................................
