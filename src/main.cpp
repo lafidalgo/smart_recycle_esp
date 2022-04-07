@@ -54,6 +54,7 @@ volatile bool btnDebounce = 0;
 volatile bool readWeightStarted = 0;
 volatile bool tareStarted = 0;
 volatile bool calibrationStarted = 0;
+volatile bool btnAlreadyPressed = 0;
 
 /*Variáveis para armazenamento do handle das tasks, queues, semaphores e timers*/
 TaskHandle_t taskReadWeightHandle = NULL;
@@ -233,10 +234,9 @@ void vTaskReadWeight(void *pvParameters)
       repeatMeasureCount++;
     }
 
-    if (repeatMeasureCount >= (weightRepeatMeasureReference - 1))
+    if (repeatMeasureCount >= weightRepeatMeasureReference)
     {
       weightMeasured = weightMeasured / weightRepeatMeasureReference;
-      repeatMeasureCount = 0;
       Serial.print("Measured weight: ");
       Serial.println(weightMeasured);
       xQueueOverwrite(xFilaTrashWeight, &weightMeasured);
@@ -246,6 +246,8 @@ void vTaskReadWeight(void *pvParameters)
       lcd.setCursor(0, 1);
       lcd.print(weightMeasured);
       lcd.print(" kg");
+      repeatMeasureCount = 0;
+      weightMeasured = 0;
     }
 
     vTaskDelay(pdMS_TO_TICKS(weightMeasureInterval));
@@ -276,6 +278,7 @@ void vTaskSendWeight(void *pvParameters)
     lcd.noBacklight();
 
     readWeightStarted = false;
+    btnAlreadyPressed = false;
 
     vTaskSuspend(taskSendWeightHandle);
   }
@@ -341,6 +344,7 @@ void vTaskCalibrate(void *pvParameters)
     lcd.print("clique em 'Tare'");
 
     LoadCell.update();
+    btnAlreadyPressed = false;
     xSemaphoreTake(xSemaphoreCalibrate, portMAX_DELAY);
     LoadCell.tare();
     while (LoadCell.getTareStatus() == false)
@@ -361,6 +365,7 @@ void vTaskCalibrate(void *pvParameters)
     float known_mass = weightReference;
 
     LoadCell.update();
+    btnAlreadyPressed = false;
     xSemaphoreTake(xSemaphoreCalibrate, portMAX_DELAY);
 
     LoadCell.refreshDataSet();                                          // refresh the dataset to be sure that the known mass is measured correct
@@ -392,6 +397,7 @@ void vTaskCalibrate(void *pvParameters)
     lcd.noBacklight();
 
     calibrationStarted = false;
+    btnAlreadyPressed = false;
 
     vTaskSuspend(taskCalibrateHandle);
   }
@@ -450,12 +456,13 @@ void btnOrganicISRCallBack()
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   int trashType = 1;
-  if (!btnDebounce && readWeightStarted)
+  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
   {
     Serial.println("BTN ORGANIC");
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
+    btnAlreadyPressed = true;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
@@ -465,12 +472,13 @@ void btnGlassISRCallBack()
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   int trashType = 2;
-  if (!btnDebounce && readWeightStarted)
+  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
   {
     Serial.println("BTN GLASS");
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
+    btnAlreadyPressed = true;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
@@ -480,12 +488,13 @@ void btnMetalISRCallBack()
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   int trashType = 3;
-  if (!btnDebounce && readWeightStarted)
+  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
   {
     Serial.println("BTN METAL");
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
+    btnAlreadyPressed = true;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
@@ -495,12 +504,13 @@ void btnPaperISRCallBack()
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   int trashType = 4;
-  if (!btnDebounce && readWeightStarted)
+  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
   {
     Serial.println("BTN PAPER");
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
+    btnAlreadyPressed = true;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
@@ -510,12 +520,13 @@ void btnPlasticISRCallBack()
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   int trashType = 5;
-  if (!btnDebounce && readWeightStarted)
+  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
   {
     Serial.println("BTN PLASTIC");
     xQueueOverwrite(xFilaTrashType, &trashType);
     vTaskResume(taskSendWeightHandle);
     btnDebounce = true;
+    btnAlreadyPressed = true;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
@@ -532,9 +543,10 @@ void btnTareISRCallBack()
     tareStarted = true;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
-  if (!btnDebounce && !readWeightStarted && !tareStarted && calibrationStarted)
+  if (!btnDebounce && !readWeightStarted && !tareStarted && calibrationStarted && !btnAlreadyPressed)
   {
     xSemaphoreGiveFromISR(xSemaphoreCalibrate, &xHigherPriorityTaskWoken);
+    btnAlreadyPressed = true;
   }
 }
 
