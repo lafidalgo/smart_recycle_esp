@@ -35,6 +35,7 @@
 #define weightReference 2000 // 2 kg
 #define weightRepeatMeasureReference 10
 #define weightMeasureInterval 50 // Time in ms between weight measurements
+#define measureTimeout 10000 // Timeout in ms to measure weight
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
 
@@ -123,7 +124,7 @@ void setup()
 
   /*Criação Timers*/
   xTimerBtnDebounce = xTimerCreate("TIMER BTN DEBOUNCE", pdMS_TO_TICKS(1000), pdTRUE, 0, callBackTimerBtnDebounce);
-  xTimerReadWeightTimeout = xTimerCreate("TIMER READ WEIGHT TIMEOUT", pdMS_TO_TICKS(10000), pdTRUE, 0, callBackTimerReadWeightTimeout);
+  xTimerReadWeightTimeout = xTimerCreate("TIMER READ WEIGHT TIMEOUT", pdMS_TO_TICKS(measureTimeout), pdTRUE, 0, callBackTimerReadWeightTimeout);
 
   /*Criação Interrupções*/
   attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
@@ -237,6 +238,9 @@ void vTaskReadWeight(void *pvParameters)
     if (repeatMeasureCount >= weightRepeatMeasureReference)
     {
       weightMeasured = weightMeasured / weightRepeatMeasureReference;
+      if(weightMeasured < 0){
+        weightMeasured = 0;
+      }
       Serial.print("Measured weight: ");
       Serial.println(weightMeasured);
       xQueueOverwrite(xFilaTrashWeight, &weightMeasured);
