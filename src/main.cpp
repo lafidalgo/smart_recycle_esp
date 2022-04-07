@@ -33,6 +33,8 @@
 
 /*Constantes*/
 #define weightReference 2000 // 2 kg
+#define weightRepeatMeasureReference 10
+#define weightMeasureInterval 50 // Time in ms between weight measurements
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
 
@@ -202,7 +204,7 @@ void setup()
   lcd.setCursor(0, 1);
   lcd.print("ligada!");
   vTaskDelay(pdMS_TO_TICKS(3000));
-  
+
   /*Initialize Connection*/
   connectAWS();
 
@@ -220,33 +222,33 @@ void loop()
 //.......................Tasks.............................
 void vTaskReadWeight(void *pvParameters)
 {
+  int repeatMeasureCount = 0;
+  float weightMeasured = 0;
   while (1)
   {
-    static boolean newDataReady = 0;
-    const int serialPrintInterval = 200; // increase value to slow down serial print activity
-
     // check for new data/start next conversion:
     if (LoadCell.update())
-      newDataReady = true;
-
-    // get smoothed value from the dataset:
-    if (newDataReady)
     {
-      float i = LoadCell.getData();
+      weightMeasured += LoadCell.getData() / 1000;
+      repeatMeasureCount++;
+    }
+
+    if (repeatMeasureCount >= (weightRepeatMeasureReference - 1))
+    {
+      weightMeasured = weightMeasured / weightRepeatMeasureReference;
+      repeatMeasureCount = 0;
       Serial.print("Measured weight: ");
-      Serial.println(i);
-      xQueueOverwrite(xFilaTrashWeight, &i);
+      Serial.println(weightMeasured);
+      xQueueOverwrite(xFilaTrashWeight, &weightMeasured);
       lcd.backlight();
       lcd.clear();
       lcd.print("Peso:");
       lcd.setCursor(0, 1);
-      lcd.print(i / 1000);
+      lcd.print(weightMeasured);
       lcd.print(" kg");
-
-      newDataReady = 0;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(serialPrintInterval));
+    vTaskDelay(pdMS_TO_TICKS(weightMeasureInterval));
   }
 }
 
