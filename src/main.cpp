@@ -8,6 +8,7 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "WiFi.h"
+#include "SPIFFS.h"
 #if defined(ESP8266) || defined(ESP32) || defined(AVR)
 #include <EEPROM.h>
 #endif
@@ -37,9 +38,12 @@
 #define weightMeasureInterval 50      // Time in ms between weight measurements
 #define measureTimeout 10000          // Timeout in ms to measure weight
 #define checkConnectionInterval 10000 // Time in ms to check connection
-#define initTimeout 30000 // Timeout in ms to init
+#define initTimeout 30000             // Timeout in ms to init
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
+
+/*Files path*/
+#define dailyWeightsData "/dailyWeights.json"
 
 /*Construtores*/
 HX711_ADC LoadCell(HX711Dout, HX711Sck);
@@ -50,7 +54,14 @@ PubSubClient client(net);
 /*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
 float calibrationValue;
-unsigned long t = 0;
+float dailyGlass = 0;
+float dailyOrganic = 0;
+float dailyMetal = 0;
+float dailyPlastic = 0;
+float dailyPaper = 0;
+
+/*Tamanho do Objeto JSON*/
+const size_t JSON_SIZE = 1200; // https://arduinojson.org/v6/assistant/
 
 /*Variáveis Globais de Estado*/
 volatile bool btnDebounce = 0;
@@ -96,6 +107,9 @@ void initButtons(void);
 void publishMessage(int trashType, float trashWeight);
 void connectAWS(void);
 void messageHandler(char *topic, byte *payload, unsigned int length);
+void dailyWeightsReset(void);
+boolean dailyWeightsRead(bool serialPrint);
+boolean dailyWeightsWrite(int trashType, float newTrashWeight);
 
 /*ISRs*/
 void btnStartISRCallBack();
@@ -116,6 +130,14 @@ void setup()
 
   Serial.println();
   Serial.println("Starting...");
+
+  if (!SPIFFS.begin(true))
+  {
+    Serial.println("An Error has occurred while mounting SPIFFS");
+    ESP.restart();
+  }
+
+  dailyWeightsRead(true);
 
   /*Criação Queues*/
   xFilaTrashType = xQueueCreate(1, sizeof(int));
@@ -292,6 +314,8 @@ void vTaskSendWeight(void *pvParameters)
     xQueueReceive(xFilaTrashType, &trashType, portMAX_DELAY);
     xQueueReceive(xFilaTrashWeight, &trashWeight, portMAX_DELAY);
 
+    dailyWeightsWrite(trashType, trashWeight);
+    dailyWeightsRead(false);
     publishMessage(trashType, trashWeight);
 
     lcd.setCursor(0, 0);
@@ -453,7 +477,7 @@ void vTaskCheckConnection(void *pvParameters)
 {
   while (1)
   {
-    //Serial.println("Task check connection");
+    // Serial.println("Task check connection");
     if ((WiFi.status() != WL_CONNECTED))
     {
       Serial.println("WiFi connection failed... Restarting ESP...");
@@ -638,10 +662,29 @@ void initButtons(void)
 
 void publishMessage(int trashType, float trashWeight)
 {
-  StaticJsonDocument<200> doc;
+  StaticJsonDocument<300> doc;
   doc["macAddress"] = WiFi.macAddress();
   doc["trashType"] = trashType;
   doc["trashWeight"] = trashWeight;
+  switch (trashType)
+    {
+    case (1):
+      doc["trashDailyWeight"] = dailyOrganic;
+      break;
+    case (2):
+      doc["trashDailyWeight"] = dailyGlass;
+      break;
+    case (3):
+      doc["trashDailyWeight"] = dailyMetal;
+      break;
+    case (4):
+      doc["trashDailyWeight"] = dailyPaper;
+      break;
+    case (5):
+      doc["trashDailyWeight"] = dailyPlastic;
+      break;
+    }
+
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
 
@@ -723,4 +766,91 @@ void messageHandler(char *topic, byte *payload, unsigned int length)
   deserializeJson(doc, payload);
   const char *message = doc["message"];
   Serial.println(message);
+}
+
+void dailyWeightsReset(void)
+{
+  dailyGlass = 0;
+  dailyOrganic = 0;
+  dailyMetal = 0;
+  dailyPlastic = 0;
+  dailyPaper = 0;
+
+  Serial.println("Daily weights reseted.");
+}
+
+boolean dailyWeightsRead(bool serialPrint)
+{
+  // Lê configuração
+  StaticJsonDocument<JSON_SIZE> jsonDailyWeights;
+
+  File file = SPIFFS.open(F(dailyWeightsData), "r");
+  if (deserializeJson(jsonDailyWeights, file))
+  {
+    // Falha na leitura, assume valores padrão
+    dailyWeightsReset();
+    Serial.println("Fail to read dailyWeights, setting default values.");
+    return false;
+  }
+  else
+  {
+    // Sucesso na leitura
+    dailyGlass = jsonDailyWeights["dailyGlass"];
+    dailyOrganic = jsonDailyWeights["dailyOrganic"];
+    dailyMetal = jsonDailyWeights["dailyMetal"];
+    dailyPlastic = jsonDailyWeights["dailyPlastic"];
+    dailyPaper = jsonDailyWeights["dailyPaper"];
+
+    file.close();
+
+    if(serialPrint){
+      Serial.println(F("Reading dailyWeights: "));
+      serializeJsonPretty(jsonDailyWeights, Serial);
+      Serial.println("");
+    }
+
+    return true;
+  }
+}
+
+boolean dailyWeightsWrite(int trashType, float newTrashWeight)
+{
+  StaticJsonDocument<JSON_SIZE> jsonDailyWeights;
+
+  File file = SPIFFS.open(F(dailyWeightsData), "r");
+  if (deserializeJson(jsonDailyWeights, file))
+  {
+    // Falha na leitura, assume valores padrão
+    dailyWeightsReset();
+    Serial.println("Fail to read dailyWeights, setting default values.");
+    return false;
+  }
+  else
+  {
+    switch (trashType)
+    {
+    case (1):
+      jsonDailyWeights["dailyOrganic"] = dailyOrganic + newTrashWeight;
+      break;
+    case (2):
+      jsonDailyWeights["dailyGlass"] = dailyGlass + newTrashWeight;
+      break;
+    case (3):
+      jsonDailyWeights["dailyMetal"] = dailyMetal + newTrashWeight;
+      break;
+    case (4):
+      jsonDailyWeights["dailyPaper"] = dailyPaper + newTrashWeight;
+      break;
+    case (5):
+      jsonDailyWeights["dailyPlastic"] = dailyPlastic + newTrashWeight;
+      break;
+    }
+    file.close();
+
+    File file = SPIFFS.open(F(dailyWeightsData), "w+");
+    serializeJsonPretty(jsonDailyWeights, file);
+    file.close();
+
+    return true;
+  }
 }
