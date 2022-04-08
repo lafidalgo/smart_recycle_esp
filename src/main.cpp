@@ -9,6 +9,8 @@
 #include <PubSubClient.h>
 #include "WiFi.h"
 #include "SPIFFS.h"
+#include <NTPClient.h>
+#include "time.h"
 #if defined(ESP8266) || defined(ESP32) || defined(AVR)
 #include <EEPROM.h>
 #endif
@@ -38,9 +40,12 @@
 #define weightMeasureInterval 50      // Time in ms between weight measurements
 #define measureTimeout 10000          // Timeout in ms to measure weight
 #define checkConnectionInterval 10000 // Time in ms to check connection
-#define initTimeout 30000             // Timeout in ms to init
+#define initTimeout 40000             // Timeout in ms to init
+#define checkTimeInterval 60000 // Time in ms to check time
 #define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
+#define ntp_server "time.google.com"
+#define utc_timezone -3
 
 /*Files path*/
 #define dailyWeightsData "/dailyWeights.json"
@@ -50,10 +55,13 @@ HX711_ADC LoadCell(HX711Dout, HX711Sck);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 WiFiClientSecure net = WiFiClientSecure();
 PubSubClient client(net);
+WiFiUDP udp;
+NTPClient ntp(udp, ntp_server, utc_timezone * 3600, 60000);
 
 /*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
 float calibrationValue;
+int dayLastUpdate = 0;
 float dailyGlass = 0;
 float dailyOrganic = 0;
 float dailyMetal = 0;
@@ -77,6 +85,7 @@ TaskHandle_t taskTareHandle = NULL;
 TaskHandle_t taskCalibrateHandle = NULL;
 TaskHandle_t taskReadTimeoutHandle = NULL;
 TaskHandle_t taskCheckConnectionHandle = NULL;
+TaskHandle_t taskCheckTimeHandle = NULL;
 
 QueueHandle_t xFilaTrashType;
 QueueHandle_t xFilaTrashWeight;
@@ -87,6 +96,7 @@ TimerHandle_t xTimerBtnDebounce;
 TimerHandle_t xTimerReadWeightTimeout;
 TimerHandle_t xTimerCheckConnection;
 TimerHandle_t xTimerInitTimeout;
+TimerHandle_t xTimerCheckTime;
 
 /*Protótipos das Tasks*/
 void vTaskReadWeight(void *pvParameters);
@@ -95,21 +105,26 @@ void vTaskTare(void *pvParameters);
 void vTaskCalibrate(void *pvParameters);
 void vTaskReadTimeout(void *pvParameters);
 void vTaskCheckConnection(void *pvParameters);
+void vTaskCheckTime(void *pvParameters);
 
 /*Timer Callbacks*/
 void callBackTimerBtnDebounce(TimerHandle_t xTimer);
 void callBackTimerReadWeightTimeout(TimerHandle_t xTimer);
 void callBackTimerCheckConnection(TimerHandle_t xTimer);
 void callBackTimerInitTimeout(TimerHandle_t xTimer);
+void callBackTimerCheckTime(TimerHandle_t xTimer);
 
 /*Funções*/
 void initButtons(void);
 void publishMessage(int trashType, float trashWeight);
+void publishDaily(int trashType);
 void connectAWS(void);
 void messageHandler(char *topic, byte *payload, unsigned int length);
-void dailyWeightsReset(void);
+void dailyWeightsResetVar(void);
+boolean dailyWeightsResetAll(void);
 boolean dailyWeightsRead(bool serialPrint);
 boolean dailyWeightsWrite(int trashType, float newTrashWeight);
+void printTime(void);
 
 /*ISRs*/
 void btnStartISRCallBack();
@@ -158,6 +173,7 @@ void setup()
   xTimerCheckConnection = xTimerCreate("TIMER CHECK CONNECTION", pdMS_TO_TICKS(checkConnectionInterval), pdTRUE, 0, callBackTimerCheckConnection);
   xTimerInitTimeout = xTimerCreate("TIMER INIT TIMEOUT", pdMS_TO_TICKS(initTimeout), pdTRUE, 0, callBackTimerInitTimeout);
   xTimerStart(xTimerInitTimeout, 0);
+  xTimerCheckTime = xTimerCreate("TIMER CHECK TIME", pdMS_TO_TICKS(checkTimeInterval), pdTRUE, 0, callBackTimerCheckTime);
 
   /*Criação Interrupções*/
   attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
@@ -212,6 +228,13 @@ void setup()
   }
   vTaskSuspend(taskCheckConnectionHandle);
 
+  if (xTaskCreatePinnedToCore(vTaskCheckTime, "TASK CHECK TIME", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &taskCheckTimeHandle, APP_CPU_NUM) == pdFAIL)
+  {
+    Serial.println("Não foi possível criar a Task Check Time");
+    ESP.restart();
+  }
+  vTaskSuspend(taskCheckTimeHandle);
+
   /*Initialize Load Cell*/
   LoadCell.begin();
   // LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
@@ -249,12 +272,16 @@ void setup()
 
   /*Initialize Connection*/
   connectAWS();
+  ntp.begin();
+  ntp.forceUpdate();
+  printTime();
 
   lcd.clear();
   lcd.noBacklight();
 
   xTimerStop(xTimerInitTimeout, 0);
   xTimerStart(xTimerCheckConnection, 0);
+  xTimerStart(xTimerCheckTime, 0);
 }
 
 //.......................Loop Function.............................
@@ -494,6 +521,31 @@ void vTaskCheckConnection(void *pvParameters)
   }
 }
 
+void vTaskCheckTime(void *pvParameters)
+{
+  const int publishInterval = 3000;
+  while (1)
+  {
+    //Serial.println("Task check time");
+    if(dayLastUpdate != ntp.getDay()){
+      Serial.println("Reseting daily weights...");
+      dailyWeightsResetAll();
+      publishDaily(1);
+      vTaskDelay(pdMS_TO_TICKS(publishInterval));
+      publishDaily(2);
+      vTaskDelay(pdMS_TO_TICKS(publishInterval));
+      publishDaily(3);
+      vTaskDelay(pdMS_TO_TICKS(publishInterval));
+      publishDaily(4);
+      vTaskDelay(pdMS_TO_TICKS(publishInterval));
+      publishDaily(5);
+    }
+
+    xTimerStart(xTimerCheckTime, 0);
+    vTaskSuspend(taskCheckTimeHandle);
+  }
+}
+
 //.......................Timers.............................
 void callBackTimerBtnDebounce(TimerHandle_t xTimer)
 {
@@ -517,6 +569,12 @@ void callBackTimerInitTimeout(TimerHandle_t xTimer)
 {
   Serial.println("Init timeout... Restarting ESP...");
   ESP.restart();
+}
+
+void callBackTimerCheckTime(TimerHandle_t xTimer)
+{
+  vTaskResume(taskCheckTimeHandle);
+  xTimerStop(xTimerCheckTime, 0);
 }
 
 //......................ISRs.................................
@@ -667,23 +725,54 @@ void publishMessage(int trashType, float trashWeight)
   doc["trashType"] = trashType;
   doc["trashWeight"] = trashWeight;
   switch (trashType)
-    {
-    case (1):
-      doc["trashDailyWeight"] = dailyOrganic;
-      break;
-    case (2):
-      doc["trashDailyWeight"] = dailyGlass;
-      break;
-    case (3):
-      doc["trashDailyWeight"] = dailyMetal;
-      break;
-    case (4):
-      doc["trashDailyWeight"] = dailyPaper;
-      break;
-    case (5):
-      doc["trashDailyWeight"] = dailyPlastic;
-      break;
-    }
+  {
+  case (1):
+    doc["trashDailyWeight"] = dailyOrganic;
+    break;
+  case (2):
+    doc["trashDailyWeight"] = dailyGlass;
+    break;
+  case (3):
+    doc["trashDailyWeight"] = dailyMetal;
+    break;
+  case (4):
+    doc["trashDailyWeight"] = dailyPaper;
+    break;
+  case (5):
+    doc["trashDailyWeight"] = dailyPlastic;
+    break;
+  }
+
+  char jsonBuffer[512];
+  serializeJson(doc, jsonBuffer); // print to client
+
+  Serial.println(jsonBuffer);
+
+  client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+}
+
+void publishDaily(int trashType){
+  StaticJsonDocument<300> doc;
+  doc["macAddress"] = WiFi.macAddress();
+  doc["trashType"] = trashType;
+  switch (trashType)
+  {
+  case (1):
+    doc["trashDailyWeight"] = dailyOrganic;
+    break;
+  case (2):
+    doc["trashDailyWeight"] = dailyGlass;
+    break;
+  case (3):
+    doc["trashDailyWeight"] = dailyMetal;
+    break;
+  case (4):
+    doc["trashDailyWeight"] = dailyPaper;
+    break;
+  case (5):
+    doc["trashDailyWeight"] = dailyPlastic;
+    break;
+  }
 
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
@@ -768,15 +857,51 @@ void messageHandler(char *topic, byte *payload, unsigned int length)
   Serial.println(message);
 }
 
-void dailyWeightsReset(void)
-{
-  dailyGlass = 0;
+void dailyWeightsResetVar(void){
+  dayLastUpdate = 0;
   dailyOrganic = 0;
+  dailyGlass = 0;
   dailyMetal = 0;
-  dailyPlastic = 0;
   dailyPaper = 0;
+  dailyPlastic = 0;
+}
 
-  Serial.println("Daily weights reseted.");
+boolean dailyWeightsResetAll(void)
+{
+  StaticJsonDocument<JSON_SIZE> jsonDailyWeights;
+
+  File fileRead = SPIFFS.open(F(dailyWeightsData), "r");
+  if (deserializeJson(jsonDailyWeights, fileRead))
+  {
+    // Falha na leitura, assume valores padrão
+    dailyWeightsResetVar();
+    Serial.println("Fail to read dailyWeights, setting default values.");
+    return false;
+  }
+  else
+  {
+    jsonDailyWeights["dayLastUpdate"] = ntp.getDay();
+    jsonDailyWeights["dailyOrganic"] = 0;
+    jsonDailyWeights["dailyGlass"] = 0;
+    jsonDailyWeights["dailyMetal"] = 0;
+    jsonDailyWeights["dailyPaper"] = 0;
+    jsonDailyWeights["dailyPlastic"] = 0;
+
+    dayLastUpdate = ntp.getDay();
+    dailyOrganic = 0;
+    dailyGlass = 0;
+    dailyMetal = 0;
+    dailyPaper = 0;
+    dailyPlastic = 0;
+    
+    fileRead.close();
+
+    File fileWrite = SPIFFS.open(F(dailyWeightsData), "w+");
+    serializeJsonPretty(jsonDailyWeights, fileWrite);
+    fileWrite.close();
+
+    return true;
+  }
 }
 
 boolean dailyWeightsRead(bool serialPrint)
@@ -784,26 +909,28 @@ boolean dailyWeightsRead(bool serialPrint)
   // Lê configuração
   StaticJsonDocument<JSON_SIZE> jsonDailyWeights;
 
-  File file = SPIFFS.open(F(dailyWeightsData), "r");
-  if (deserializeJson(jsonDailyWeights, file))
+  File fileRead = SPIFFS.open(F(dailyWeightsData), "r");
+  if (deserializeJson(jsonDailyWeights, fileRead))
   {
     // Falha na leitura, assume valores padrão
-    dailyWeightsReset();
+    dailyWeightsResetVar();
     Serial.println("Fail to read dailyWeights, setting default values.");
     return false;
   }
   else
   {
     // Sucesso na leitura
+    dayLastUpdate = jsonDailyWeights["dayLastUpdate"];
     dailyGlass = jsonDailyWeights["dailyGlass"];
     dailyOrganic = jsonDailyWeights["dailyOrganic"];
     dailyMetal = jsonDailyWeights["dailyMetal"];
     dailyPlastic = jsonDailyWeights["dailyPlastic"];
     dailyPaper = jsonDailyWeights["dailyPaper"];
 
-    file.close();
+    fileRead.close();
 
-    if(serialPrint){
+    if (serialPrint)
+    {
       Serial.println(F("Reading dailyWeights: "));
       serializeJsonPretty(jsonDailyWeights, Serial);
       Serial.println("");
@@ -817,11 +944,11 @@ boolean dailyWeightsWrite(int trashType, float newTrashWeight)
 {
   StaticJsonDocument<JSON_SIZE> jsonDailyWeights;
 
-  File file = SPIFFS.open(F(dailyWeightsData), "r");
-  if (deserializeJson(jsonDailyWeights, file))
+  File fileRead = SPIFFS.open(F(dailyWeightsData), "r");
+  if (deserializeJson(jsonDailyWeights, fileRead))
   {
     // Falha na leitura, assume valores padrão
-    dailyWeightsReset();
+    dailyWeightsResetVar();
     Serial.println("Fail to read dailyWeights, setting default values.");
     return false;
   }
@@ -845,12 +972,25 @@ boolean dailyWeightsWrite(int trashType, float newTrashWeight)
       jsonDailyWeights["dailyPlastic"] = dailyPlastic + newTrashWeight;
       break;
     }
-    file.close();
+    jsonDailyWeights["dayLastUpdate"] = ntp.getDay();
 
-    File file = SPIFFS.open(F(dailyWeightsData), "w+");
-    serializeJsonPretty(jsonDailyWeights, file);
-    file.close();
+    fileRead.close();
+
+    File fileWrite = SPIFFS.open(F(dailyWeightsData), "w+");
+    serializeJsonPretty(jsonDailyWeights, fileWrite);
+    fileWrite.close();
 
     return true;
   }
+}
+
+void printTime(void){
+  struct tm  ts;
+  char buf[80];
+  time_t rawtime = ntp.getEpochTime();
+
+  // Format time, "ddd yyyy-mm-dd hh:mm:ss zzz"
+  ts = *localtime(&rawtime);
+  strftime(buf, sizeof(buf), "%a %Y-%m-%d %H:%M:%S %Z", &ts);
+  Serial.println(buf);
 }
