@@ -11,6 +11,7 @@
 #include "SPIFFS.h"
 #include <NTPClient.h>
 #include "time.h"
+#include "Keypad.h"
 #if defined(ESP8266) || defined(ESP32) || defined(AVR)
 #include <EEPROM.h>
 #endif
@@ -26,13 +27,20 @@
 #define HX711Dout 4
 #define HX711Sck 5
 #define vibrationSensor 15
-#define btnOrganic 2
-#define btnGlass 16
-#define btnMetal 17
-#define btnPaper 18
-#define btnPlastic 19
 #define btnTare 23
-#define btnCalibrate 25
+#define btnCalibrate 19
+
+/*Keypad*/
+#define ROW_NUM     4 // four rows
+#define COLUMN_NUM  3 // three columns
+char keys[ROW_NUM][COLUMN_NUM] = {
+  {'1', '2', '3'},
+  {'4', '5', '6'},
+  {'7', '8', '9'},
+  {'*', '0', '#'}
+};
+byte pin_rows[ROW_NUM] = {13, 12, 14, 27};
+byte pin_column[COLUMN_NUM] = {26, 25, 33};
 
 /*Constantes*/
 #define weightReference 2000 // 2 kg
@@ -57,6 +65,7 @@ WiFiClientSecure net = WiFiClientSecure();
 PubSubClient client(net);
 WiFiUDP udp;
 NTPClient ntp(udp, ntp_server, utc_timezone * 3600, 60000);
+Keypad keypad = Keypad( makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM );
 
 /*Variáveis Globais*/
 const int calVal_eepromAdress = 0;
@@ -67,6 +76,7 @@ float dailyOrganic = 0;
 float dailyMetal = 0;
 float dailyPlastic = 0;
 float dailyPaper = 0;
+int trashTypeKeypad = 0;
 
 /*Tamanho do Objeto JSON*/
 const size_t JSON_SIZE = 1200; // https://arduinojson.org/v6/assistant/
@@ -86,6 +96,7 @@ TaskHandle_t taskCalibrateHandle = NULL;
 TaskHandle_t taskReadTimeoutHandle = NULL;
 TaskHandle_t taskCheckConnectionHandle = NULL;
 TaskHandle_t taskCheckTimeHandle = NULL;
+TaskHandle_t taskReadKeypadHandle = NULL;
 
 QueueHandle_t xFilaTrashType;
 QueueHandle_t xFilaTrashWeight;
@@ -106,6 +117,7 @@ void vTaskCalibrate(void *pvParameters);
 void vTaskReadTimeout(void *pvParameters);
 void vTaskCheckConnection(void *pvParameters);
 void vTaskCheckTime(void *pvParameters);
+void vTaskReadKeypad(void *pvParameters);
 
 /*Timer Callbacks*/
 void callBackTimerBtnDebounce(TimerHandle_t xTimer);
@@ -125,6 +137,7 @@ boolean dailyWeightsResetAll(void);
 boolean dailyWeightsRead(bool serialPrint);
 boolean dailyWeightsWrite(int trashType, float newTrashWeight);
 void printTime(void);
+void clearLCDLine(int line);
 
 /*ISRs*/
 void vibrationSensorISRCallBack();
@@ -174,16 +187,6 @@ void setup()
   xTimerInitTimeout = xTimerCreate("TIMER INIT TIMEOUT", pdMS_TO_TICKS(initTimeout), pdTRUE, 0, callBackTimerInitTimeout);
   xTimerStart(xTimerInitTimeout, 0);
   xTimerCheckTime = xTimerCreate("TIMER CHECK TIME", pdMS_TO_TICKS(checkTimeInterval), pdTRUE, 0, callBackTimerCheckTime);
-
-  /*Criação Interrupções*/
-  attachInterrupt(digitalPinToInterrupt(vibrationSensor), vibrationSensorISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnOrganic), btnOrganicISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnGlass), btnGlassISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnMetal), btnMetalISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnPaper), btnPaperISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnPlastic), btnPlasticISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnTare), btnTareISRCallBack, FALLING);
-  attachInterrupt(digitalPinToInterrupt(btnCalibrate), btnCalibrateISRCallBack, FALLING);
 
   /*Criação Tasks*/
   if (xTaskCreatePinnedToCore(vTaskReadWeight, "TASK READ WEIGHT", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &taskReadWeightHandle, APP_CPU_NUM) == pdFAIL)
@@ -235,6 +238,13 @@ void setup()
   }
   vTaskSuspend(taskCheckTimeHandle);
 
+  if (xTaskCreatePinnedToCore(vTaskReadKeypad, "TASK READ KEYPAD", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &taskReadKeypadHandle, APP_CPU_NUM) == pdFAIL)
+  {
+    Serial.println("Não foi possível criar a Task Read Keypad");
+    ESP.restart();
+  }
+  vTaskSuspend(taskReadKeypadHandle);
+
   /*Initialize Load Cell*/
   LoadCell.begin();
   // LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
@@ -279,6 +289,11 @@ void setup()
   lcd.clear();
   lcd.noBacklight();
 
+  /*Criação Interrupções*/
+  attachInterrupt(digitalPinToInterrupt(vibrationSensor), vibrationSensorISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnTare), btnTareISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(btnCalibrate), btnCalibrateISRCallBack, FALLING);
+
   xTimerStop(xTimerInitTimeout, 0);
   xTimerStart(xTimerCheckConnection, 0);
   xTimerStart(xTimerCheckTime, 0);
@@ -316,9 +331,8 @@ void vTaskReadWeight(void *pvParameters)
       Serial.println(weightMeasured);
       xQueueOverwrite(xFilaTrashWeight, &weightMeasured);
       lcd.backlight();
-      lcd.clear();
-      lcd.print("Peso:");
-      lcd.setCursor(0, 1);
+      clearLCDLine(0);
+      lcd.print("Peso: ");
       lcd.print(weightMeasured);
       lcd.print(" kg");
       repeatMeasureCount = 0;
@@ -486,6 +500,7 @@ void vTaskReadTimeout(void *pvParameters)
   {
     Serial.println("Task read timeout");
     vTaskSuspend(taskReadWeightHandle);
+    vTaskSuspend(taskReadKeypadHandle);
 
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -546,6 +561,45 @@ void vTaskCheckTime(void *pvParameters)
   }
 }
 
+void vTaskReadKeypad(void *pvParameters)
+{
+  while (1)
+  {
+    char key = keypad.getKey();
+
+    if (key) {
+      Serial.print("Botão pressionado: ");
+      Serial.println(key);
+      if (key == '*'){
+        trashTypeKeypad = trashTypeKeypad / 10;
+        Serial.println(trashTypeKeypad);
+        clearLCDLine(1);
+        if(trashTypeKeypad){
+          lcd.print("Tipo: ");
+          lcd.print(trashTypeKeypad);
+        }
+      }
+      else if (key == '#'){
+        Serial.print("Tipo selecionado: ");
+        Serial.println(trashTypeKeypad);
+        xQueueOverwrite(xFilaTrashType, &trashTypeKeypad);
+        vTaskResume(taskSendWeightHandle);
+        vTaskSuspend(taskReadKeypadHandle);
+      }
+      else{
+        key -= 48;
+        trashTypeKeypad = trashTypeKeypad * 10 + key;
+        Serial.println(trashTypeKeypad);
+        clearLCDLine(1);
+        lcd.print("Tipo: ");
+        lcd.print(trashTypeKeypad);
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
 //.......................Timers.............................
 void callBackTimerBtnDebounce(TimerHandle_t xTimer)
 {
@@ -585,89 +639,11 @@ void vibrationSensorISRCallBack()
   {
     Serial.println("BTN/SENSOR START");
     vTaskResume(taskReadWeightHandle);
+    vTaskResume(taskReadKeypadHandle);
     xTimerStartFromISR(xTimerReadWeightTimeout, &xHigherPriorityTaskWoken);
     btnDebounce = true;
     readWeightStarted = true;
-    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
-  }
-}
-
-void btnOrganicISRCallBack()
-{
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-  int trashType = 1;
-  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
-  {
-    Serial.println("BTN ORGANIC");
-    xQueueOverwrite(xFilaTrashType, &trashType);
-    vTaskResume(taskSendWeightHandle);
-    btnDebounce = true;
-    btnAlreadyPressed = true;
-    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
-  }
-}
-
-void btnGlassISRCallBack()
-{
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-  int trashType = 2;
-  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
-  {
-    Serial.println("BTN GLASS");
-    xQueueOverwrite(xFilaTrashType, &trashType);
-    vTaskResume(taskSendWeightHandle);
-    btnDebounce = true;
-    btnAlreadyPressed = true;
-    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
-  }
-}
-
-void btnMetalISRCallBack()
-{
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-  int trashType = 3;
-  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
-  {
-    Serial.println("BTN METAL");
-    xQueueOverwrite(xFilaTrashType, &trashType);
-    vTaskResume(taskSendWeightHandle);
-    btnDebounce = true;
-    btnAlreadyPressed = true;
-    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
-  }
-}
-
-void btnPaperISRCallBack()
-{
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-  int trashType = 4;
-  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
-  {
-    Serial.println("BTN PAPER");
-    xQueueOverwrite(xFilaTrashType, &trashType);
-    vTaskResume(taskSendWeightHandle);
-    btnDebounce = true;
-    btnAlreadyPressed = true;
-    xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
-  }
-}
-
-void btnPlasticISRCallBack()
-{
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-  int trashType = 5;
-  if (!btnDebounce && readWeightStarted && !btnAlreadyPressed)
-  {
-    Serial.println("BTN PLASTIC");
-    xQueueOverwrite(xFilaTrashType, &trashType);
-    vTaskResume(taskSendWeightHandle);
-    btnDebounce = true;
-    btnAlreadyPressed = true;
+    trashTypeKeypad = 0;
     xTimerStartFromISR(xTimerBtnDebounce, &xHigherPriorityTaskWoken);
   }
 }
@@ -709,11 +685,6 @@ void btnCalibrateISRCallBack()
 void initButtons(void)
 {
   pinMode(vibrationSensor, INPUT_PULLUP);
-  pinMode(btnOrganic, INPUT_PULLUP);
-  pinMode(btnGlass, INPUT_PULLUP);
-  pinMode(btnMetal, INPUT_PULLUP);
-  pinMode(btnPaper, INPUT_PULLUP);
-  pinMode(btnPlastic, INPUT_PULLUP);
   pinMode(btnTare, INPUT_PULLUP);
   pinMode(btnCalibrate, INPUT_PULLUP);
 }
@@ -993,4 +964,14 @@ void printTime(void){
   ts = *localtime(&rawtime);
   strftime(buf, sizeof(buf), "%a %Y-%m-%d %H:%M:%S %Z", &ts);
   Serial.println(buf);
+}
+
+void clearLCDLine(int line)
+{               
+  lcd.setCursor(0, line);
+  for(int n = 0; n < 16; n++) // 20 indicates symbols in line. For 2x16 LCD write - 16
+  {
+    lcd.print(" ");
+  }
+  lcd.setCursor(0, line);
 }
