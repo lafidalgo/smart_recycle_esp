@@ -345,7 +345,7 @@ void vTaskReadWeight(void *pvParameters)
 
 void vTaskSendWeight(void *pvParameters)
 {
-  int trashType = 0; // 1 - Organic; 2 - Glass; 3 - Metal; 4 - Paper; 5 - Plastic
+  int trashType = 0;
   float trashWeight = 0;
   while (1)
   {
@@ -360,9 +360,10 @@ void vTaskSendWeight(void *pvParameters)
     publishMessage(trashType, trashWeight);
 
     lcd.setCursor(0, 0);
-    lcd.print("Peso enviado");
+    lcd.print("Peso enviado!");
     lcd.setCursor(0, 1);
-    lcd.print("com sucesso");
+    lcd.print("Tipo: ");
+    lcd.print(trashType);
 
     vTaskDelay(pdMS_TO_TICKS(3000));
     lcd.clear();
