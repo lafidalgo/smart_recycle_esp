@@ -25,7 +25,7 @@
 /*Mapeamento de pinos*/
 #define HX711Dout 4
 #define HX711Sck 5
-#define btnStart 15
+#define vibrationSensor 15
 #define btnOrganic 2
 #define btnGlass 16
 #define btnMetal 17
@@ -127,7 +127,7 @@ boolean dailyWeightsWrite(int trashType, float newTrashWeight);
 void printTime(void);
 
 /*ISRs*/
-void btnStartISRCallBack();
+void vibrationSensorISRCallBack();
 void btnOrganicISRCallBack();
 void btnGlassISRCallBack();
 void btnMetalISRCallBack();
@@ -176,7 +176,7 @@ void setup()
   xTimerCheckTime = xTimerCreate("TIMER CHECK TIME", pdMS_TO_TICKS(checkTimeInterval), pdTRUE, 0, callBackTimerCheckTime);
 
   /*Criação Interrupções*/
-  attachInterrupt(digitalPinToInterrupt(btnStart), btnStartISRCallBack, FALLING);
+  attachInterrupt(digitalPinToInterrupt(vibrationSensor), vibrationSensorISRCallBack, FALLING);
   attachInterrupt(digitalPinToInterrupt(btnOrganic), btnOrganicISRCallBack, FALLING);
   attachInterrupt(digitalPinToInterrupt(btnGlass), btnGlassISRCallBack, FALLING);
   attachInterrupt(digitalPinToInterrupt(btnMetal), btnMetalISRCallBack, FALLING);
@@ -578,12 +578,12 @@ void callBackTimerCheckTime(TimerHandle_t xTimer)
 }
 
 //......................ISRs.................................
-void btnStartISRCallBack()
+void vibrationSensorISRCallBack()
 {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   if (!btnDebounce && !readWeightStarted && !tareStarted && !calibrationStarted)
   {
-    Serial.println("BTN START");
+    Serial.println("BTN/SENSOR START");
     vTaskResume(taskReadWeightHandle);
     xTimerStartFromISR(xTimerReadWeightTimeout, &xHigherPriorityTaskWoken);
     btnDebounce = true;
@@ -708,7 +708,7 @@ void btnCalibrateISRCallBack()
 //......................Funções.............................
 void initButtons(void)
 {
-  pinMode(btnStart, INPUT_PULLUP);
+  pinMode(vibrationSensor, INPUT_PULLUP);
   pinMode(btnOrganic, INPUT_PULLUP);
   pinMode(btnGlass, INPUT_PULLUP);
   pinMode(btnMetal, INPUT_PULLUP);
