@@ -24,11 +24,11 @@
 #include "freertos/timers.h"
 
 /*Mapeamento de pinos*/
-#define HX711Dout 4
-#define HX711Sck 5
-#define vibrationSensor 15
-#define btnTare 23
-#define btnCalibrate 19
+#define HX711Dout 14
+#define HX711Sck 13
+#define vibrationSensor 19
+#define btnTare 27
+#define btnCalibrate 26
 
 /*Keypad*/
 #define ROW_NUM     4 // four rows
@@ -39,8 +39,8 @@ char keys[ROW_NUM][COLUMN_NUM] = {
   {'7', '8', '9'},
   {'*', '0', '#'}
 };
-byte pin_rows[ROW_NUM] = {13, 12, 14, 27};
-byte pin_column[COLUMN_NUM] = {26, 25, 33};
+byte pin_rows[ROW_NUM] = {18, 5, 17, 16};
+byte pin_column[COLUMN_NUM] = {4, 2, 15};
 
 /*Constantes*/
 #define weightReference 2000 // 2 kg
