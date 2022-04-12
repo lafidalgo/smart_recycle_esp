@@ -26,7 +26,7 @@
 /*Mapeamento de pinos*/
 #define HX711Dout 14
 #define HX711Sck 13
-#define vibrationSensor 19
+#define vibrationSensor 23
 #define btnTare 27
 #define btnCalibrate 26
 
@@ -39,8 +39,8 @@ char keys[ROW_NUM][COLUMN_NUM] = {
   {'7', '8', '9'},
   {'*', '0', '#'}
 };
-byte pin_rows[ROW_NUM] = {18, 5, 17, 16};
-byte pin_column[COLUMN_NUM] = {4, 2, 15};
+byte pin_rows[ROW_NUM] = {15, 4, 16, 17};
+byte pin_column[COLUMN_NUM] = {5, 18, 19};
 
 /*Constantes*/
 #define weightReference 2000 // 2 kg
@@ -238,7 +238,7 @@ void setup()
   }
   vTaskSuspend(taskCheckTimeHandle);
 
-  if (xTaskCreatePinnedToCore(vTaskReadKeypad, "TASK READ KEYPAD", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &taskReadKeypadHandle, APP_CPU_NUM) == pdFAIL)
+  if (xTaskCreatePinnedToCore(vTaskReadKeypad, "TASK READ KEYPAD", configMINIMAL_STACK_SIZE + 2048, NULL, 1, &taskReadKeypadHandle, APP_CPU_NUM) == pdFAIL)
   {
     Serial.println("Não foi possível criar a Task Read Keypad");
     ESP.restart();
